@@ -38,7 +38,7 @@ This project is designed to demonstrate an end-to-end ML + Data Engineering pipe
 
 ```bash
 # Clone the repo
-git clone https://github.com/yourusername/nba-realtime-insights.git
+git clone https://github.com/keithy1012/nba-streaming-data.git
 cd nba-realtime-insights
 
 # Set up Python virtual environment
