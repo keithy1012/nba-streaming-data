@@ -1,0 +1,102 @@
+🗺️ Project Roadmap: Real-Time NBA Game Insight Pipeline
+Phase 1: Project Setup & Simulation (Week 1–2)
+🎯 Goal: Simulate live data and design your base system.
+
+✅ Milestones:
+Set up a GitHub repo, README, and dev environment
+
+Choose historical NBA data (e.g., 2023–24 season)
+
+Build a data simulator to "stream" play-by-play events line-by-line
+
+Set up Kafka (or Redis as a simpler first step) for ingestion
+
+🛠️ Tools:
+NBA data: stats.nba.com, basketball-reference.com
+
+Streaming simulator: Python script with time.sleep()
+
+Kafka: Docker + confluent-kafka (Python), or Redis Pub/Sub
+
+Phase 2: Stream Processing & Feature Engineering (Week 3–4)
+🎯 Goal: Ingest and process data in real time.
+
+✅ Milestones:
+Consume events using Kafka or Redis
+
+Extract game state features: score diff, possession, game clock, last 5 plays
+
+Build rolling features with sliding windows (e.g., moving averages)
+
+Set up Apache Spark Streaming or Faust (Python)
+
+🛠️ Tools:
+Faust (Python stream processing library)
+
+Spark Structured Streaming + PySpark
+
+Pandas, NumPy
+
+Phase 3: Model Training (Week 5–6)
+🎯 Goal: Train a model to predict game outcome or key event.
+
+✅ Milestones:
+Build labeled dataset (win/loss or scoring run)
+
+Train baseline model (logistic regression, XGBoost)
+
+Evaluate accuracy and calibration (e.g., Brier score, AUC)
+
+Save model using joblib or torch.save
+
+🛠️ Tools:
+Scikit-learn or XGBoost for tabular data
+
+Optionally PyTorch if using sequence models
+
+Jupyter or Colab notebooks
+
+Phase 4: Inference API (Week 7)
+🎯 Goal: Serve your model via a real-time API.
+
+✅ Milestones:
+Build FastAPI app with a /predict endpoint
+
+Load and serve the trained model
+
+Accept streaming game state JSON and return prediction
+
+🛠️ Tools:
+FastAPI, Uvicorn
+
+Docker for containerization
+
+Phase 5: Real-Time Dashboard (Week 8)
+🎯 Goal: Visualize predictions and game data live.
+
+✅ Milestones:
+Create a dashboard with Streamlit or Flask + JS
+
+Show current game state + win probability updates
+
+Add player-specific stats or fatigue metrics
+
+🛠️ Tools:
+Streamlit (easy, reactive Python UI)
+
+Altair or Plotly for charts
+
+Phase 6: Logging & Monitoring (Optional Stretch)
+🎯 Goal: Make the pipeline observable and production-friendly.
+
+✅ Milestones:
+Add logging (e.g., game ID, predictions, latencies)
+
+Track model performance and drift over time
+
+Monitor pipeline health with Prometheus + Grafana
+
+🛠️ Tools:
+Prometheus, Grafana
+
+MLflow (for model versioning)
