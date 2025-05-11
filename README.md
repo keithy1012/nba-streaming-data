@@ -24,7 +24,7 @@ This project is designed to demonstrate an end-to-end ML + Data Engineering pipe
 
 - Kafka (for streaming data processing pipeline)
 - Grafana (for dashboarding and visualizations)
-- PostgreSQL (for storage)
+- PostgreSQL / Redis (for storage)
 - Docker (for deployment)
 
 **ML Modeling**
@@ -47,5 +47,15 @@ source venv/bin/activate  # On Windows use `venv\Scripts\activate`
 
 # Install backend dependencies
 pip install -r requirements.txt
+
+# Service Deployment
+docker-compose up -d
+
+# Start the Data Streaming Processor
+python stream_ingestion/live_producer.py
+
+# Run the Data Processing Pipeline
+python stream_processing/processor.py
+
 
 ```

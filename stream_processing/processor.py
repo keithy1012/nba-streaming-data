@@ -6,8 +6,12 @@ from kafka import KafkaConsumer
 from flask import Flask, jsonify
 import psycopg2
 from datetime import datetime
+#import redis
 
 app = Flask(__name__)
+
+# Connect to Redis (for in-game storage)
+# r = redis.Redis(host='localhost', port=6379, db=0, decode_responses=True)
 
 # PostgreSQL connection
 conn = psycopg2.connect(
