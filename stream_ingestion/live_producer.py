@@ -20,7 +20,18 @@ def get_active_game_ids():
 def fetch_game_events(game_id):
     try:
         bs = boxscore.BoxScore(game_id=game_id)
-        players = bs.get_dict()["game"]["players"]
+        home_team = bs.get_dict()["game"]["homeTeam"]["teamName"]
+        away_team = bs.get_dict()["game"]["awayTeam"]["teamName"]
+        home_players = bs.get_dict()["game"]["homeTeam"]["players"]
+        away_players = bs.get_dict()["game"]["awayTeam"]["players"]
+        for player in home_players:
+            player["teamTricode"] = home_team
+        for player in away_players:
+            player["teamTricode"] = away_team
+
+        players = home_players + away_players
+
+        print(len(players))
         for player in players:
             player_name = player["name"]
             team = player["teamTricode"]

@@ -5,140 +5,162 @@ import pandas as pd
 from tqdm import tqdm
 import time
 
-def get_past_games(season="2023-24", num_games=50):
+
+def get_team_id_by_name(team_name):
+    all_teams = teams.get_teams()
+    for team in all_teams:
+        if team_name.lower() in team['abbreviation'].lower():
+            return team['id'], team['nickname']
+    return None  # Not found
+
+def get_past_games(season="2023-24", num_games=10):
     gamefinder = leaguegamefinder.LeagueGameFinder(season_nullable=season)
     games = gamefinder.get_data_frames()[0]
+    games = games[games["MATCHUP"].str.contains("@")]
     return games.head(num_games)
 
-def simulate_snapshots(game_id, interval=120):
-    try:
-        pbp = playbyplayv2.PlayByPlayV2(game_id=game_id).get_data_frames()[0]
-        box = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=game_id).get_data_frames()[1]  # [1] = team stats
+def simulate_snapshots(game_id, game_date, home_team_name, away_team_name, interval=120):
+    pbp = playbyplayv2.PlayByPlayV2(game_id=game_id).get_data_frames()[0]
+    time.sleep(0.5)
 
-        game_date = pd.to_datetime(pbp.iloc[0]['GAME_DATE'])
+    home_team_id, home_team_nickname = get_team_id_by_name(home_team_name)
+    away_team_id, away_team_nickname = get_team_id_by_name(away_team_name.strip())
+    time.sleep(0.5)
 
-        # Get logs for both teams
-        home_team_id = home_team['TEAM_ID']
-        away_team_id = away_team['TEAM_ID']
+    # Get win/loss history
+    home_log = teamgamelog.TeamGameLog(team_id=home_team_id, season='2023').get_data_frames()[0]
+    away_log = teamgamelog.TeamGameLog(team_id=away_team_id, season='2023').get_data_frames()[0]
+    home_before = home_log[pd.to_datetime(home_log['GAME_DATE']) < game_date]
+    away_before = away_log[pd.to_datetime(away_log['GAME_DATE']) < game_date]
+    home_wins = (home_before['WL'] == 'W').sum()
+    home_losses = (home_before['WL'] == 'L').sum()
+    away_wins = (away_before['WL'] == 'W').sum()
+    away_losses = (away_before['WL'] == 'L').sum()
 
-        home_log = teamgamelog.TeamGameLog(team_id=home_team_id, season='2023').get_data_frames()[0]
-        away_log = teamgamelog.TeamGameLog(team_id=away_team_id, season='2023').get_data_frames()[0]
+    # Final game outcome (for label)
+    final_margin = pbp['SCOREMARGIN'].dropna().iloc[-1]
+    label = 1 if int(final_margin) > 0 else 0
 
-        # Filter games before this one
-        home_before = home_log[pd.to_datetime(home_log['GAME_DATE']) < game_date]
-        away_before = away_log[pd.to_datetime(away_log['GAME_DATE']) < game_date]
+    # Accumulators for stats
+    stats = {
+        'home': {'fgm': 0, 'fga': 0, 'fg3m': 0, 'fg3a': 0, 'ftm': 0, 'fta': 0, 'to': 0, 'reb': 0},
+        'away': {'fgm': 0, 'fga': 0, 'fg3m': 0, 'fg3a': 0, 'ftm': 0, 'fta': 0, 'to': 0, 'reb': 0}
+    }
 
-        home_wins = (home_before['WL'] == 'W').sum()
-        home_losses = (home_before['WL'] == 'L').sum()
-        away_wins = (away_before['WL'] == 'W').sum()
-        away_losses = (away_before['WL'] == 'L').sum()
+    snapshots = []
+    current_time = 2880  # start of game in seconds
+    last_snapshot_time = 2880
 
+    for idx, row in pbp.iterrows():
+        #print(row)
+        if not isinstance(row['PCTIMESTRING'], str):
+            continue
 
-        players = boxscoretraditionalv2.BoxScoreTraditionalV2(game_id=game_id).get_data_frames()[0]
-        # Sort by MIN or PTS
-        home_players = players[players['TEAM_ID'] == home_team['TEAM_ID']].sort_values('MIN', ascending=False)
-        away_players = players[players['TEAM_ID'] == away_team['TEAM_ID']].sort_values('MIN', ascending=False)
+        m, s = map(int, row['PCTIMESTRING'].split(':'))
+        period = row['PERIOD']
+        seconds_left = (4 - period) * 720 + m * 60 + s
+        team_abbr = row['PLAYER1_TEAM_ABBREVIATION']
+    
+        if team_abbr == home_team_name or home_team_nickname in str(row['HOMEDESCRIPTION']):
+            team = 'home'
+        if team_abbr == away_team_name or home_team_nickname in str(row['VISITORDESCRIPTION']):
+            team = 'away'
+        msg_type = row['EVENTMSGTYPE']
+        action_type = row['EVENTMSGACTIONTYPE']
 
-        # Get top 1 player stats (or top 3 if you want more)
-        home_top = home_players.iloc[0]
-        away_top = away_players.iloc[0]
+        if msg_type == 1:  # Made FG
+            stats[team]['fgm'] += 1
+            stats[team]['fga'] += 1
+            if action_type in [1, 2, 3]:  # 3PT actions
+                stats[team]['fg3m'] += 1
+                stats[team]['fg3a'] += 1
+            else:
+                stats[team]['fg3a'] += 0  # no increase
+        elif msg_type == 2:  # Missed FG
+            stats[team]['fga'] += 1
+            if action_type in [1, 2, 3]:
+                stats[team]['fg3a'] += 1
+        elif msg_type == 3:  # Free throws
+            stats[team]['fta'] += 1
+            desc = str(row['HOMEDESCRIPTION']) + str(row['VISITORDESCRIPTION'])
+            if 'miss' not in desc.lower():
+                stats[team]['ftm'] += 1
+        elif msg_type == 4:  # Rebound
+            stats[team]['reb'] += 1
+        elif msg_type == 5:  # Turnover
+            stats[team]['to'] += 1
+        else:
+            pass
 
+        if seconds_left <= last_snapshot_time - interval:
+            score = row['SCORE']
+            if isinstance(score, str) and '-' in score:
+                home_score, away_score = map(int, score.split('-'))
 
-        final_row = pbp[pbp['EVENTMSGTYPE'] == 13]
-        winner = pbp['SCOREMARGIN'].dropna().iloc[-1]
-        label = 1 if int(winner) > 0 else 0  # Home team wins
+                # Momentum: score 2 minutes ago (look BACKWARD, not forward)
+                target_time = seconds_left + interval
+                prev_home, prev_away = home_score, away_score
 
-        # Identify home/away
-        home_team = box.loc[box['TEAM_CITY'].duplicated(keep='last') == False].iloc[0]
-        away_team = box.loc[box['TEAM_CITY'].duplicated(keep='first') == False].iloc[0]
+                for j in range(idx, -1, -1):  # Walk backward
+                    prev_row = pbp.iloc[j]
+                    if isinstance(prev_row['PCTIMESTRING'], str):
+                        m2, s2 = map(int, prev_row['PCTIMESTRING'].split(':'))
+                        prev_time = (4 - prev_row['PERIOD']) * 720 + m2 * 60 + s2
+                        if prev_time >= target_time and isinstance(prev_row['SCORE'], str) and '-' in prev_row['SCORE']:
+                            prev_home, prev_away = map(int, prev_row['SCORE'].split('-'))
+                            break
+                print(home_score, prev_home)
+                print(away_score, prev_away)
+                home_momentum = home_score - prev_home
+                away_momentum = away_score - prev_away
+                score_diff_momentum = (home_score - away_score) - (prev_home - prev_away)
 
-        snapshots = []
-        current_time = 2880  # 48 * 60
-        for idx, row in pbp.iterrows():
-            period = row['PERIOD']
-            minutes = row['PCTIMESTRING'].split(':')
-            seconds_left = int(minutes[0]) * 60 + int(minutes[1])
-            time_left = (4 - period) * 720 + seconds_left
+                home = stats['home']
+                away = stats['away']
+    
+                snapshot = {
+                    'game_id': game_id,
+                    'home_team_wins': home_wins,
+                    'home_team_losses': home_losses,
+                    'away_team_wins': away_wins,
+                    'away_team_losses': away_losses,
+                    'seconds_left': seconds_left,
+                    'period': period,
+                    'home_score': home_score,
+                    'away_score': away_score,
+                    'score_diff': home_score - away_score,
+                    'home_fg_pct': "{:.3f}".format(home['fgm'] / home['fga']) if home['fga'] else 0.0,
+                    'home_3pt_pct': "{:.3f}".format(home['fg3m'] / home['fg3a']) if home['fg3a'] else 0.0,
+                    'home_ft_pct': "{:.3f}".format(home['ftm'] / home['fta']) if home['fta'] else 0.0,
+                    'home_to': home['to'],
+                    'home_reb': home['reb'],
+                    'away_fg_pct': "{:.3f}".format(away['fgm'] / away['fga']) if away['fga'] else 0.0,
+                    'away_3pt_pct': "{:.3f}".format(away['fg3m'] / away['fg3a']) if away['fg3a'] else 0.0,
+                    'away_ft_pct': "{:.3f}".format(away['ftm'] / away['fta']) if away['fta'] else 0.0,
+                    'away_to': away['to'],
+                    'away_reb': away['reb'],
+                    'score_diff_momentum': score_diff_momentum,
+                    'points_scored_last_2min_home': home_momentum,
+                    'points_scored_last_2min_away': away_momentum,
+                    'label': label
+                }
+                snapshots.append(snapshot)
+                last_snapshot_time = seconds_left
 
-            if time_left <= current_time - interval:
-                score = row['SCORE']
-                if isinstance(score, str) and '-' in score:
-                    home_score, away_score = map(int, score.split('-'))
-                    # Find score 2 minutes ago
-                    target_time = time_left + 120
-                    previous_score = None
-                    for j in range(idx, len(pbp)):
-                        future_row = pbp.iloc[j]
-                        pctimestr = future_row['PCTIMESTRING']
-                        if isinstance(pctimestr, str):
-                            m, s = map(int, pctimestr.split(":"))
-                            future_seconds_left = (4 - future_row['PERIOD']) * 720 + m * 60 + s
-                            if future_seconds_left <= target_time:
-                                score = future_row['SCORE']
-                                if isinstance(score, str) and '-' in score:
-                                    home_prev, away_prev = map(int, score.split('-'))
-                                    previous_score = (home_prev, away_prev)
-                                    break
+    return snapshots
 
-                    if previous_score:
-                        home_momentum = home_score - previous_score[0]
-                        away_momentum = away_score - previous_score[1]
-                        score_diff_momentum = (home_score - away_score) - (previous_score[0] - previous_score[1])
-                    else:
-                        home_momentum = away_momentum = score_diff_momentum = 0
-
-
-                    # Snapshot with team stats
-                    snapshot = {
-                        'game_id': game_id,
-                        'home_team_wins': home_wins,
-                        'home_team_losses': home_losses,
-                        'away_team_wins': away_wins,
-                        'away_team_losses': away_losses,
-                        'seconds_left': time_left,
-                        'period': period,
-                        'home_score': home_score,
-                        'away_score': away_score,
-                        'score_diff': home_score - away_score,
-                        'home_fg_pct': float(home_team['FG_PCT']),
-                        'home_3pt_pct': float(home_team['FG3_PCT']),
-                        'home_ft_pct': float(home_team['FT_PCT']),
-                        'home_ast': int(home_team['AST']),
-                        'home_to': int(home_team['TO']),
-                        'home_reb': int(home_team['REB']),
-                        'away_fg_pct': float(away_team['FG_PCT']),
-                        'away_3pt_pct': float(away_team['FG3_PCT']),
-                        'away_ft_pct': float(away_team['FT_PCT']),
-                        'away_ast': int(away_team['AST']),
-                        'away_to': int(away_team['TO']),
-                        'away_reb': int(away_team['REB']),
-                        'score_diff_momentum': score_diff_momentum,
-                        'points_scored_last_2min_home': home_momentum,
-                        'points_scored_last_2min_away': away_momentum,
-                        'home_top1_pts': int(home_top['PTS']),
-                        'home_top1_ast': int(home_top['AST']),
-                        'home_top1_reb': int(home_top['REB']),
-                        'away_top1_pts': int(away_top['PTS']),
-                        'away_top1_ast': int(away_top['AST']),
-                        'away_top1_reb': int(away_top['REB']),
-                        'label': label
-                    }
-                    snapshots.append(snapshot)
-                    current_time = time_left
-
-        return snapshots
-
-    except Exception as e:
-        print(f"[Error] Game {game_id}: {e}")
-        return []
 
 def main():
     all_snapshots = []
     games = get_past_games()
     for _, game in tqdm(games.iterrows(), total=len(games)):
         game_id = game['GAME_ID']
-        time.sleep(0.6)
-        snapshots = simulate_snapshots(game_id)
+        game_date = game['GAME_DATE']
+        home_team = game["MATCHUP"][game["MATCHUP"].index("@")+2:].strip()
+        away_team = game["MATCHUP"][:game["MATCHUP"].index("@")-1].strip()
+
+        time.sleep(1.0)
+        snapshots = simulate_snapshots(game_id, game_date, home_team, away_team)
         all_snapshots.extend(snapshots)
 
     df = pd.DataFrame(all_snapshots)

@@ -1,36 +1,38 @@
-'''
-snapshot = {
-        'game_id': game_id,
-        'home_team_wins': home_wins,
-        'home_team_losses': home_losses,
-        'away_team_wins': away_wins,
-        'away_team_losses': away_losses,
-        'seconds_left': time_left,
-        'period': period,
-        'home_score': home_score,
-        'away_score': away_score,
-        'score_diff': home_score - away_score,
-        'home_fg_pct': float(home_team['FG_PCT']),
-        'home_3pt_pct': float(home_team['FG3_PCT']),
-        'home_ft_pct': float(home_team['FT_PCT']),
-        'home_ast': int(home_team['AST']),
-        'home_to': int(home_team['TO']),
-        'home_reb': int(home_team['REB']),
-        'away_fg_pct': float(away_team['FG_PCT']),
-        'away_3pt_pct': float(away_team['FG3_PCT']),
-        'away_ft_pct': float(away_team['FT_PCT']),
-        'away_ast': int(away_team['AST']),
-        'away_to': int(away_team['TO']),
-        'away_reb': int(away_team['REB']),
-        'score_diff_momentum': score_diff_momentum,
-        'points_scored_last_2min_home': home_momentum,
-        'points_scored_last_2min_away': away_momentum,
-        'home_top1_pts': int(home_top['PTS']),
-        'home_top1_ast': int(home_top['AST']),
-        'home_top1_reb': int(home_top['REB']),
-        'away_top1_pts': int(away_top['PTS']),
-        'away_top1_ast': int(away_top['AST']),
-        'away_top1_reb': int(away_top['REB']),
-        'label': label
-    }
-'''
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+import xgboost as xgb
+
+# Load the dataset
+df = pd.read_csv("data/win_prediction_dataset.csv")
+
+# Separate features and target
+# Make sure 'label' is your target column (1 if home team won, 0 otherwise)
+X = df.drop(columns=["label", "game_id"]) 
+y = df["label"]
+
+# Split into training and test sets
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
+)
+
+# Initialize XGBoost Classifier
+model = xgb.XGBClassifier(
+    objective="binary:logistic",
+    eval_metric="logloss",
+    use_label_encoder=False,
+    random_state=42
+)
+
+# Train the model
+model.fit(X_train, y_train)
+
+# Predict on test set
+y_pred = model.predict(X_test)
+
+# Evaluate
+print("Accuracy:", accuracy_score(y_test, y_pred))
+print("\nClassification Report:")
+print(classification_report(y_test, y_pred))
+print("\nConfusion Matrix:")
+print(confusion_matrix(y_test, y_pred))
