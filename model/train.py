@@ -4,9 +4,10 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 import xgboost as xgb
 
 df = pd.read_csv("data/win_prediction_dataset.csv")
-
-X = df.drop(columns=["label", "game_id"]) 
+print(df.columns)
 y = df["label"]
+X = df.drop(columns=["label", "game_id"]) 
+
 
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42, stratify=y

@@ -4,7 +4,18 @@ from nba_api.stats.static import teams
 import pandas as pd
 from tqdm import tqdm
 import time
+import os
 
+CSV_FILE = "data/win_prediction_dataset.csv"
+
+CSV_COLUMNS = [
+    "game_id", "home_team_wins", "home_team_losses", "away_team_wins", "away_team_losses",
+    "seconds_left", "period", "home_score", "away_score", "score_diff",
+    "home_fg_pct", "home_3pt_pct", "home_ft_pct", "home_to", "home_reb",
+    "away_fg_pct", "away_3pt_pct", "away_ft_pct", "away_to", "away_reb",
+    "score_diff_momentum", "points_scored_last_2min_home", "points_scored_last_2min_away",
+    "label"
+]
 
 def get_team_id_by_name(team_name):
     all_teams = teams.get_teams()
@@ -13,7 +24,7 @@ def get_team_id_by_name(team_name):
             return team['id'], team['nickname']
     return None
 
-def get_past_games(season="2023-24", num_games=10):
+def get_past_games(num_games, season="2024-25"):
     gamefinder = leaguegamefinder.LeagueGameFinder(season_nullable=season)
     games = gamefinder.get_data_frames()[0]
     games = games[games["MATCHUP"].str.contains("@")]
@@ -106,8 +117,6 @@ def simulate_snapshots(game_id, game_date, home_team_name, away_team_name, inter
                         if prev_time >= target_time and isinstance(prev_row['SCORE'], str) and '-' in prev_row['SCORE']:
                             prev_home, prev_away = map(int, prev_row['SCORE'].split('-'))
                             break
-                print(home_score, prev_home)
-                print(away_score, prev_away)
                 home_momentum = home_score - prev_home
                 away_momentum = away_score - prev_away
                 score_diff_momentum = (home_score - away_score) - (prev_home - prev_away)
@@ -146,23 +155,24 @@ def simulate_snapshots(game_id, game_date, home_team_name, away_team_name, inter
 
     return snapshots
 
-
 def main():
     all_snapshots = []
-    games = get_past_games()
+    games = get_past_games(50)
     for _, game in tqdm(games.iterrows(), total=len(games)):
         game_id = game['GAME_ID']
         game_date = game['GAME_DATE']
         home_team = game["MATCHUP"][game["MATCHUP"].index("@")+2:].strip()
-        away_team = game["MATCHUP"][:game["MATCHUP"].index("@")-1].strip()
+        away_team = game["MATCHUP"][:game["MATCHUP"].index("@")].strip()
 
         time.sleep(1.0)
         snapshots = simulate_snapshots(game_id, game_date, home_team, away_team)
         all_snapshots.extend(snapshots)
 
-    df = pd.DataFrame(all_snapshots)
-    df.to_csv("data/win_prediction_dataset.csv", index=False)
-    print(f"[Done] Dataset saved to data/win_prediction_dataset.csv")
+    df_new = pd.DataFrame(all_snapshots, columns=CSV_COLUMNS)
+    write_header = not os.path.isfile(CSV_FILE)
+    df_new.to_csv(CSV_FILE, mode='a', header=write_header, index=False)
+    
+    print(f"[Done] Data {'created' if write_header else 'appended'} at {CSV_FILE}")
 
 if __name__ == "__main__":
     main()
