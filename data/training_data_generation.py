@@ -11,7 +11,7 @@ def get_team_id_by_name(team_name):
     for team in all_teams:
         if team_name.lower() in team['abbreviation'].lower():
             return team['id'], team['nickname']
-    return None  # Not found
+    return None
 
 def get_past_games(season="2023-24", num_games=10):
     gamefinder = leaguegamefinder.LeagueGameFinder(season_nullable=season)
@@ -27,7 +27,6 @@ def simulate_snapshots(game_id, game_date, home_team_name, away_team_name, inter
     away_team_id, away_team_nickname = get_team_id_by_name(away_team_name.strip())
     time.sleep(0.5)
 
-    # Get win/loss history
     home_log = teamgamelog.TeamGameLog(team_id=home_team_id, season='2023').get_data_frames()[0]
     away_log = teamgamelog.TeamGameLog(team_id=away_team_id, season='2023').get_data_frames()[0]
     home_before = home_log[pd.to_datetime(home_log['GAME_DATE']) < game_date]
@@ -37,7 +36,6 @@ def simulate_snapshots(game_id, game_date, home_team_name, away_team_name, inter
     away_wins = (away_before['WL'] == 'W').sum()
     away_losses = (away_before['WL'] == 'L').sum()
 
-    # Final game outcome (for label)
     final_margin = pbp['SCOREMARGIN'].dropna().iloc[-1]
     label = 1 if int(final_margin) > 0 else 0
 
@@ -52,7 +50,6 @@ def simulate_snapshots(game_id, game_date, home_team_name, away_team_name, inter
     last_snapshot_time = 2880
 
     for idx, row in pbp.iterrows():
-        #print(row)
         if not isinstance(row['PCTIMESTRING'], str):
             continue
 
@@ -97,11 +94,11 @@ def simulate_snapshots(game_id, game_date, home_team_name, away_team_name, inter
             if isinstance(score, str) and '-' in score:
                 home_score, away_score = map(int, score.split('-'))
 
-                # Momentum: score 2 minutes ago (look BACKWARD, not forward)
+                # Momentum: score 2 minutes ago
                 target_time = seconds_left + interval
                 prev_home, prev_away = home_score, away_score
 
-                for j in range(idx, -1, -1):  # Walk backward
+                for j in range(idx, -1, -1):
                     prev_row = pbp.iloc[j]
                     if isinstance(prev_row['PCTIMESTRING'], str):
                         m2, s2 = map(int, prev_row['PCTIMESTRING'].split(':'))

@@ -13,5 +13,9 @@ model.load_model("model/win_predictor.json")
 "points_scored_last_2min_away"]
 '''
 new_data = np.array([73, 9, 9, 73, 2, 4, 100, 80, 20, .4, .3, .9, 2, 20, .34, .23, .78, 5, 14, 10, 4, 5]).reshape(1, -1)
-preds = model.predict(new_data)
-print(preds)
+pred = model.predict_proba(new_data)[0]
+home_win_chance = pred[1]
+away_win_chance = pred[0]
+
+print(f"Home win probability: {home_win_chance:.2%}")
+print(f"Away win probability: {away_win_chance:.2%}")

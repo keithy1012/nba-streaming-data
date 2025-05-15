@@ -6,6 +6,12 @@ from kafka import KafkaConsumer
 from flask import Flask, jsonify
 import psycopg2
 from datetime import datetime
+import xgboost as xgb
+import numpy as np
+
+model = xgb.XGBClassifier()
+model.load_model("model/win_predictor.json")
+
 #import redis
 
 app = Flask(__name__)
@@ -23,7 +29,6 @@ conn = psycopg2.connect(
 )
 cursor = conn.cursor()
 
-# In-memory trackers
 score = defaultdict(int)
 player_shots = defaultdict(lambda: {"made": 0, "attempted": 0})
 player_stats = defaultdict(lambda: {
@@ -35,7 +40,20 @@ player_stats = defaultdict(lambda: {
 })
 event_counts = defaultdict(lambda: defaultdict(int))
 
-# Kafka consumer
+team_stats = defaultdict(lambda: {
+    "turnovers": 0,
+    "blocks": 0,
+    "rebounds_offensive": 0,
+    "rebounds_defensive": 0,
+    "made_2pt": 0,
+    "missed_2pt": 0,
+    "made_3pt": 0,
+    "missed_3pt": 0,
+    "made_ft": 0,
+    "seconds_left": 0, 
+    "period": 0
+})
+
 consumer = KafkaConsumer(
     'nba_live_events',
     bootstrap_servers='localhost:9092',
@@ -56,8 +74,7 @@ supported_events = {
     "turnover", "block", "rebound_offensive", "rebound_defensive",
     "made_2pt", "missed_2pt", "made_3pt", "missed_3pt", "made_ft"
 }
-
-# Kafka consumer loop in a separate thread
+team_names = set()
 def consume_events():
     print("[Processor] Starting feature extractor...")
     for message in consumer:
@@ -67,17 +84,36 @@ def consume_events():
             print("GAME END")
             break
         team = event.get("team")
+        team_names.add(team)
         player = event.get("player")
         now = datetime.utcnow()
 
         if not team or event_type not in supported_events:
             continue
 
-        # Update in-memory counts
         event_counts[team][event_type] += 1
 
         if event_type in event_points:
             score[team] += event_points[event_type]
+
+        if event_type == "turnover":
+            team_stats[team]["turnovers"] += 1
+        elif event_type == "block":
+            team_stats[team]["blocks"] += 1
+        elif event_type == "rebound_offensive":
+            team_stats[team]["rebounds_offensive"] += 1
+        elif event_type == "rebound_defensive":
+            team_stats[team]["rebounds_defensive"] += 1
+        elif event_type == "made_2pt":
+            team_stats[team]["made_2pt"] += 1
+        elif event_type == "missed_2pt":
+            team_stats[team]["missed_2pt"] += 1
+        elif event_type == "made_3pt":
+            team_stats[team]["made_3pt"] += 1
+        elif event_type == "missed_3pt":
+            team_stats[team]["missed_3pt"] += 1
+        elif event_type == "made_ft":
+            team_stats[team]["made_ft"] += 1
 
         if player:
             if event_type in shooting_events:
@@ -126,6 +162,39 @@ def consume_events():
                 stats["rebounds_offensive"], stats["rebounds_defensive"], stats["rebounds_total"]
             ))
 
+        features = [
+            team_stats[team_names[0]]['wins'],
+            team_stats[team_names[0]]['losses'],
+            team_stats[team_names[1]]['wins'],
+            team_stats[team_names[1]]['losses'],
+            team_stats['seconds_left'],
+            team_stats['period'],
+            team_stats[team_names[0]]['score'],
+            team_stats[team_names[1]]['score'],
+            team_stats[team_names[0]]['score'] - team_stats[team_names[1]]['score'],
+            team_stats[team_names[0]]['fgm'] / team_stats[team_names[0]]['fga'] if team_stats[team_names[0]]['fga'] else 0,
+            team_stats[team_names[0]]['fg3m'] / team_stats[team_names[0]]['fg3a'] if team_stats[team_names[0]]['fg3a'] else 0,
+            team_stats[team_names[0]]['ftm'] / team_stats[team_names[0]]['fta'] if team_stats[team_names[0]]['fta'] else 0,
+            team_stats[team_names[0]]['to'],
+            team_stats[team_names[0]]['reb'],
+            team_stats[team_names[1]]['fgm'] / team_stats[team_names[1]]['fga'] if team_stats[team_names[1]]['fga'] else 0,
+            team_stats[team_names[1]]['fg3m'] / team_stats[team_names[1]]['fg3a'] if team_stats[team_names[1]]['fg3a'] else 0,
+            team_stats[team_names[1]]['ftm'] / team_stats[team_names[1]]['fta'] if team_stats[team_names[1]]['fta'] else 0,
+            team_stats[team_names[1]]['to'],
+            team_stats[team_names[1]]['reb'],
+            0,  # score_diff_momentum placeholder
+            0,  # points_scored_last_2min_home
+            0   # points_scored_last_2min_away
+        ]
+
+        win_prob = model.predict_proba(np.array(features).reshape(1, -1))[0][1]  # prob home wins
+
+        cursor.execute("""
+            INSERT INTO win_predictions (timestamp, home_team_score, away_team_score, home_win_probability)
+            VALUES (%s, %s, %s, %s)
+        """, (now, team_stats[team_names[0]]['score'], team_stats[team_names[1]]['score'], win_prob))
+
+
         conn.commit()
 
 # Flask routes (optional API layer)
@@ -140,6 +209,16 @@ def get_player_shots():
 @app.route("/api/player_stats")
 def get_player_stats():
     return jsonify(dict(player_stats))
+
+@app.route("/api/win_probability")
+def get_win_prob():
+    cursor.execute("SELECT * FROM win_probabilities ORDER BY timestamp DESC LIMIT 1")
+    row = cursor.fetchone()
+    return jsonify({
+        "timestamp": row[0], "home_team": row[1], "away_team": row[2],
+        "home_score": row[3], "away_score": row[4],
+        "home_win_prob": row[5]
+    })
 
 if __name__ == '__main__':
     threading.Thread(target=consume_events, daemon=True).start()

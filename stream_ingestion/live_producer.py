@@ -1,8 +1,7 @@
-# stream_producer/nba_api_producer.py
 import json
 import time
 from kafka import KafkaProducer
-from nba_api.live.nba.endpoints import scoreboard, boxscore
+from nba_api.live.nba.endpoints import scoreboard, boxscore, playbyplay
 
 last_stats = {}
 
@@ -17,93 +16,77 @@ def get_active_game_ids():
     return [game['gameId'] for game in game_data if game['gameStatusText'] != 'Final']
 
 
+
 def fetch_game_events(game_id):
     try:
-        bs = boxscore.BoxScore(game_id=game_id)
-        home_team = bs.get_dict()["game"]["homeTeam"]["teamName"]
-        away_team = bs.get_dict()["game"]["awayTeam"]["teamName"]
-        home_players = bs.get_dict()["game"]["homeTeam"]["players"]
-        away_players = bs.get_dict()["game"]["awayTeam"]["players"]
-        for player in home_players:
-            player["teamTricode"] = home_team
-        for player in away_players:
-            player["teamTricode"] = away_team
+        pbp = playbyplay.PlayByPlay(game_id=game_id)
+        with open('data.json', 'w') as f:
+            json.dump(pbp.get_dict()["game"], f)
+        plays = pbp.get_dict()["game"].get("actions", [])
 
-        players = home_players + away_players
+        for play in plays:
+            # Extract relevant information from each play
+            description = play.get("description")
+            player_name = play.get("playerName")
+            team_name = play.get("teamTricode")
+            time_remaining = play.get("clock")
+            quarter = play.get("period")
 
-        print(len(players))
-        for player in players:
-            player_name = player["name"]
-            team = player["teamTricode"]
-            stats = player["statistics"]
+            event_type = "other"  # Default event type
+            if description:
+                if " 3PT" in description:
+                    event_type = "made_3pt" if "makes" in description.lower() else "missed_3pt"
+                elif " 2PT" in description:
+                    event_type = "made_2pt" if "makes" in description.lower() else "missed_2pt"
+                elif "Free Throw" in description:
+                    event_type = "made_ft" if "makes" in description.lower() else "missed_ft"
+                elif "TURNOVER" in description:
+                    event_type = "turnover"
+                elif "BLOCK" in description:
+                    event_type = "block"
+                elif "REBOUND" in description:
+                    event_type = "rebound"
+                elif "FOUL" in description:
+                    event_type = "foul"
+                elif "STEAL" in description:
+                    event_type = "steal"
+                elif "TIMEOUT" in description:
+                    event_type = "timeout"
+                elif "lost ball" in description:
+                    event_type = "turnover" #addded
+                elif "offensive REBOUND" in description:
+                    event_type = "rebound_offensive" #added
+                elif "defensive REBOUND" in description:
+                    event_type = "rebound_defensive" #added
+  
+            total_seconds = 0
+            if time_remaining:
+                try:
+                    m_index = time_remaining.find('M')
+                    s_index = time_remaining.find('S')
+                    minutes = int(time_remaining[m_index-2:m_index])
+                    seconds = int(time_remaining[m_index+1:s_index-3])
+                    total_seconds = minutes * 60 + seconds
+                except ValueError:
+                    print(f"Error converting time_remaining: {time_remaining} for game_id: {game_id}")
+                    total_seconds = 0
+            # Create a payload for the Kafka message
+            payload = {
+                "game_id": game_id,
+                "event_type": event_type,
+                "description": description,
+                "player_name": player_name,
+                "team_name": team_name,
+                "time_remaining": total_seconds,
+                "quarter": quarter
+            }
 
-            # Get previous stats
-            prev = last_stats.get(player_name, {
-                "points": 0,
-                "fieldGoalsMade": 0,
-                "fieldGoalsAttempted": 0,
-                "threePointersMade": 0,
-                "threePointersAttempted": 0,
-                "freeThrowsMade": 0,
-                "freeThrowsAttempted": 0,
-                "reboundsOffensive": 0,
-                "reboundsDefensive": 0,
-                "turnovers": 0,
-                "blocks": 0
-            })
-
-            events = []
-            if stats["fieldGoalsMade"] > prev["fieldGoalsMade"]:
-                new_3pt = stats["threePointersMade"] - prev["threePointersMade"]
-                if new_3pt > 0:
-                    events += ["made_3pt"] * new_3pt
-                else:
-                    events += ["made_2pt"] * (stats["fieldGoalsMade"] - prev["fieldGoalsMade"])
-            if stats["fieldGoalsAttempted"] > prev["fieldGoalsAttempted"]:
-                missed = (
-                    stats["fieldGoalsAttempted"] - prev["fieldGoalsAttempted"]
-                    - (stats["fieldGoalsMade"] - prev["fieldGoalsMade"])
-                )
-                events += ["missed_2pt"] * missed  # Approximation
-
-            if stats["threePointersAttempted"] > prev["threePointersAttempted"]:
-                missed_3pt = (
-                    stats["threePointersAttempted"] - prev["threePointersAttempted"]
-                    - (stats["threePointersMade"] - prev["threePointersMade"])
-                )
-                events += ["missed_3pt"] * missed_3pt
-
-            if stats["freeThrowsMade"] > prev["freeThrowsMade"]:
-                events += ["made_ft"] * (stats["freeThrowsMade"] - prev["freeThrowsMade"])
-            if stats["freeThrowsAttempted"] > prev["freeThrowsAttempted"]:
-                missed_ft = (
-                    stats["freeThrowsAttempted"] - prev["freeThrowsAttempted"]
-                    - (stats["freeThrowsMade"] - prev["freeThrowsMade"])
-                )
-                events += ["missed_ft"] * missed_ft
-
-            if stats["turnovers"] > prev["turnovers"]:
-                events += ["turnover"] * (stats["turnovers"] - prev["turnovers"])
-            if stats["blocks"] > prev["blocks"]:
-                events += ["block"] * (stats["blocks"] - prev["blocks"])
-            if stats["reboundsOffensive"] > prev["reboundsOffensive"]:
-                events += ["rebound_offensive"] * (stats["reboundsOffensive"] - prev["reboundsOffensive"])
-            if stats["reboundsDefensive"] > prev["reboundsDefensive"]:
-                events += ["rebound_defensive"] * (stats["reboundsDefensive"] - prev["reboundsDefensive"])
-
-            for event_type in events:
-                payload = {
-                    "player": player_name,
-                    "team": team,
-                    "event": event_type
-                }
-                producer.send('nba_live_events', payload)
-                print(f"[Producer] Sent: {payload}")
-
-            last_stats[player_name] = stats
+            producer.send('nba_live_events', payload)
+            print(f"[Producer] Sent: {payload}")
 
     except Exception as e:
         print(f"[Error] {e}")
+
 
 
 def run():
@@ -112,7 +95,7 @@ def run():
         game_ids = get_active_game_ids()
         for game_id in game_ids:
             fetch_game_events(game_id)
-        time.sleep(15) 
+        time.sleep(15)
 
 if __name__ == "__main__":
     run()
