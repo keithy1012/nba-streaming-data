@@ -40,20 +40,6 @@ player_stats = defaultdict(lambda: {
 })
 event_counts = defaultdict(lambda: defaultdict(int))
 
-team_stats = defaultdict(lambda: {
-    "turnovers": 0,
-    "blocks": 0,
-    "rebounds_offensive": 0,
-    "rebounds_defensive": 0,
-    "made_2pt": 0,
-    "missed_2pt": 0,
-    "made_3pt": 0,
-    "missed_3pt": 0,
-    "made_ft": 0,
-    "seconds_left": 0, 
-    "period": 0
-})
-
 consumer = KafkaConsumer(
     'nba_live_events',
     bootstrap_servers='localhost:9092',
@@ -77,7 +63,22 @@ supported_events = {
 team_names = set()
 def consume_events():
     print("[Processor] Starting feature extractor...")
+    team_stats = defaultdict(lambda: {
+        "turnovers": 0,
+        "blocks": 0,
+        "rebounds_offensive": 0,
+        "rebounds_defensive": 0,
+        "made_2pt": 0,
+        "missed_2pt": 0,
+        "made_3pt": 0,
+        "missed_3pt": 0,
+        "made_ft": 0,
+        "missed_ft":0,
+        "seconds_left": 0, 
+        "period": 0
+    })
     for message in consumer:
+        print(message)
         event = message.value
         event_type = event.get("event")
         if event_type == "GAME_END":
@@ -114,6 +115,8 @@ def consume_events():
             team_stats[team]["missed_3pt"] += 1
         elif event_type == "made_ft":
             team_stats[team]["made_ft"] += 1
+        elif event_type == "missed_ft":
+            team_stats[team]["missed_ft"] += 1
 
         if player:
             if event_type in shooting_events:
@@ -161,38 +164,66 @@ def consume_events():
                 stats["turnovers"], stats["blocks"],
                 stats["rebounds_offensive"], stats["rebounds_defensive"], stats["rebounds_total"]
             ))
-
+        team_one, team_two = list(team_names)[0], list(team_names)[1]
+        team_one_score = team_stats[team_one]['made_2pt'] * 2 + team_stats[team_one]['made_3pt'] * 3 + team_stats[team_one]['made_ft']
+        team_two_score = team_stats[team_two]['made_2pt'] * 2 + team_stats[team_two]['made_3pt'] * 3 + team_stats[team_two]['made_ft']
+        team_one_fga = team_stats[team_one]['made_2pt'] + team_stats[team_one]['made_3pt'] + team_stats[team_one]['made_ft'] + team_stats[team_one]['missed_2pt'] + team_stats[team_one]['missed_3pt'] + team_stats[team_one]['missed_ft']
+        team_two_fga = team_stats[team_two]['made_2pt'] + team_stats[team_two]['made_3pt'] + team_stats[team_two]['made_ft'] + team_stats[team_two]['missed_2pt'] + team_stats[team_two]['missed_3pt'] + team_stats[team_two]['missed_ft']
+        team_one_fgm = team_stats[team_one]['made_2pt'] + team_stats[team_one]['made_3pt'] + team_stats[team_one]['made_ft']
+        team_two_fgm = team_stats[team_two]['made_2pt'] + team_stats[team_two]['made_3pt'] + team_stats[team_two]['made_ft']
+        team_one_fg3a = team_stats[team_one]['made_3pt'] + team_stats[team_one]['missed_3pt']
+        team_two_fg3a = team_stats[team_two]['made_3pt'] + team_stats[team_two]['missed_3pt']
+        team_one_fta = team_stats[team_one]['made_ft'] + team_stats[team_one]['missed_ft']
+        team_two_fta = team_stats[team_two]['made_ft'] + team_stats[team_two]['missed_ft']
+        
         features = [
-            team_stats[team_names[0]]['wins'],
-            team_stats[team_names[0]]['losses'],
-            team_stats[team_names[1]]['wins'],
-            team_stats[team_names[1]]['losses'],
-            team_stats['seconds_left'],
-            team_stats['period'],
-            team_stats[team_names[0]]['score'],
-            team_stats[team_names[1]]['score'],
-            team_stats[team_names[0]]['score'] - team_stats[team_names[1]]['score'],
-            team_stats[team_names[0]]['fgm'] / team_stats[team_names[0]]['fga'] if team_stats[team_names[0]]['fga'] else 0,
-            team_stats[team_names[0]]['fg3m'] / team_stats[team_names[0]]['fg3a'] if team_stats[team_names[0]]['fg3a'] else 0,
-            team_stats[team_names[0]]['ftm'] / team_stats[team_names[0]]['fta'] if team_stats[team_names[0]]['fta'] else 0,
-            team_stats[team_names[0]]['to'],
-            team_stats[team_names[0]]['reb'],
-            team_stats[team_names[1]]['fgm'] / team_stats[team_names[1]]['fga'] if team_stats[team_names[1]]['fga'] else 0,
-            team_stats[team_names[1]]['fg3m'] / team_stats[team_names[1]]['fg3a'] if team_stats[team_names[1]]['fg3a'] else 0,
-            team_stats[team_names[1]]['ftm'] / team_stats[team_names[1]]['fta'] if team_stats[team_names[1]]['fta'] else 0,
-            team_stats[team_names[1]]['to'],
-            team_stats[team_names[1]]['reb'],
+            0,#team_stats[list(team_names)[0]]['wins'],
+            0,#team_stats[team_names[0]]['losses'],
+            0,#team_stats[team_names[1]]['wins'],
+            0,#team_stats[team_names[1]]['losses'],
+            team_stats[team_one]['seconds_left'],
+            team_stats[team_one]['period'],
+            team_one_score,
+            team_two_score,
+            team_one_score - team_two_score,
+            team_one_fgm / team_one_fga if team_one_fga else 0,
+            team_stats[team_one]['made_3pt'] / team_one_fg3a if team_one_fg3a else 0,
+            team_stats[team_one]['made_ft'] / team_one_fta if team_one_fta else 0,
+            team_stats[team_one]['turnovers'],
+            team_stats[team_one]['rebounds_offensive'] + team_stats[team_one]['rebounds_defensive'],
+
+            team_two_fgm / team_two_fga if team_two_fga else 0,
+            team_stats[team_two]['made_3pt'] / team_two_fg3a if team_two_fg3a else 0,
+            team_stats[team_two]['made_ft'] / team_two_fta if team_two_fta else 0,
+            team_stats[team_two]['turnovers'],
+            team_stats[team_two]['rebounds_offensive'] + team_stats[team_two]['rebounds_defensive'],
             0,  # score_diff_momentum placeholder
             0,  # points_scored_last_2min_home
             0   # points_scored_last_2min_away
         ]
 
-        win_prob = model.predict_proba(np.array(features).reshape(1, -1))[0][1]  # prob home wins
+        win_prob = float(model.predict_proba(np.array(features).reshape(1, -1))[0][1])  # prob home wins
+        print(win_prob)
 
+        team_stats = defaultdict(lambda: {
+            "turnovers": 0,
+            "blocks": 0,
+            "rebounds_offensive": 0,
+            "rebounds_defensive": 0,
+            "made_2pt": 0,
+            "missed_2pt": 0,
+            "made_3pt": 0,
+            "missed_3pt": 0,
+            "made_ft": 0,
+            "missed_ft":0,
+            "seconds_left": 0, 
+            "period": 0
+        })
+        
         cursor.execute("""
-            INSERT INTO win_predictions (timestamp, home_team_score, away_team_score, home_win_probability)
-            VALUES (%s, %s, %s, %s)
-        """, (now, team_stats[team_names[0]]['score'], team_stats[team_names[1]]['score'], win_prob))
+            INSERT INTO win_probabilities (timestamp, home_team, away_team, home_score, away_score, home_win_prob)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, (datetime.now(), str(team_one), str(team_two), int(team_one_score), int(team_two_score), win_prob))
 
 
         conn.commit()
