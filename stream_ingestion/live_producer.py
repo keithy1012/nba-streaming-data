@@ -83,11 +83,14 @@ def fetch_game_events(game_id):
 
             producer.send('nba_live_events', payload)
             print(f"[Producer] Sent: {payload}")
+        game_end_payload = {
+            "game_id": game_id,
+            "event_type": "GAME_END"
+        }
+        producer.send('nba_live_events', game_end_payload)
 
     except Exception as e:
         print(f"[Error] {e}")
-
-
 
 def run():
     print("[NBA API Producer] Starting live feed...")

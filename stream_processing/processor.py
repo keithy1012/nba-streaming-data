@@ -83,6 +83,7 @@ def consume_events():
         event_type = event.get("event")
         if event_type == "GAME_END":
             print("GAME END")
+            cursor.execute("TRUNCATE player_stats, team_scores, player_shots, win_probabilities")
             break
         team = event.get("team")
         team_names.add(team)
